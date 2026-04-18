@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 export const config = {
-  matcher: ["/admin/:path*"],
+  matcher: ["/admin/:path*", "/api/debug/:path*"],
 };
 
 function timingSafeEqual(a: string, b: string): boolean {

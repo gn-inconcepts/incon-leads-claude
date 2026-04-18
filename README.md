@@ -129,19 +129,70 @@ curl -X POST http://localhost:3000/api/lead \
 # → {"ok":true}
 ```
 
-## Logs
+## Logs & Debugging
 
 Strukturiert als JSON (Railway parst das direkt). Relevante Events:
 
-| Event                     | Level | Bedeutung                                      |
-| ------------------------- | ----- | ---------------------------------------------- |
-| `lead.created`            | info  | Lead in DB gespeichert                         |
-| `lead.honeypot.hit`       | warn  | Bot-Submission geblockt                        |
-| `lead.ratelimit.blocked`  | warn  | IP hat Limit erreicht                          |
-| `routine.forward.success` | info  | Routine hat den Lead akzeptiert                |
-| `routine.forward.bad_status` / `routine.forward.exception` | warn | Retry läuft |
-| `lead.routine.failed`     | warn  | alle Retries fehlgeschlagen → Fallback-Mail    |
-| `mail.fallback.sent`      | info  | Fallback-Mail an Vertrieb verschickt           |
+| Event                        | Level | Bedeutung                                                         |
+| ---------------------------- | ----- | ----------------------------------------------------------------- |
+| `lead.created`               | info  | Lead in DB gespeichert                                            |
+| `lead.honeypot.hit`          | warn  | Bot-Submission geblockt                                           |
+| `lead.ratelimit.blocked`     | warn  | IP hat Limit erreicht                                             |
+| `routine.config.missing`     | error | `CLAUDE_ROUTINE_URL`/`TOKEN` fehlt in ENV                         |
+| `routine.forward.start`      | info  | Request abgeschickt (host, token-präfix, bodyBytes, attempt)      |
+| `routine.forward.response`   | info  | Antwort erhalten (status, durationMs, contentType, bodyPreview)   |
+| `routine.forward.bad_status` | warn  | Nicht-2xx-Response (bodyPreview im Log)                           |
+| `routine.forward.exception`  | error | Fetch geworfen (Timeout, DNS, TLS — `timeout`-Flag + `cause`)     |
+| `routine.sessionurl.missing` | warn  | 2xx-Response, aber keine Session-URL extrahierbar                 |
+| `routine.forward.success`    | info  | Routine hat akzeptiert + Session-URL extrahiert                   |
+| `lead.routine.failed`        | warn  | alle Retries fehlgeschlagen → Fallback-Mail                       |
+| `mail.fallback.sent`         | info  | Fallback-Mail an Vertrieb verschickt                              |
+
+### Debug-Endpoints (Basic Auth: `ADMIN_USER`/`ADMIN_PASS`)
+
+**`GET /api/debug`** — Config-Status + letzte 5 Leads mit vollem Fehler-Dump:
+
+```bash
+curl -u "$ADMIN_USER:$ADMIN_PASS" https://<deine-url>/api/debug | jq
+```
+
+Zeigt u.a.:
+- ob `CLAUDE_ROUTINE_URL`/`TOKEN` gesetzt sind (inkl. Host + Token-Präfix, niemals der ganze Token)
+- Status-Counts (`RECEIVED` / `FORWARDED` / `FALLBACK_MAIL` / `FAILED`)
+- letzte 5 Leads mit `errorMessage` (enthält bei Fehlern den gespeicherten Response-Body)
+
+**`POST /api/debug/ping`** — feuert einen Test-Payload direkt gegen die Routine (**kein DB-Eintrag, kein Mail-Fallback**). Der ideale erste Check:
+
+```bash
+curl -u "$ADMIN_USER:$ADMIN_PASS" -X POST https://<deine-url>/api/debug/ping | jq
+```
+
+Antwort:
+```json
+{
+  "ok": false,
+  "attempts": 3,
+  "status": 401,
+  "sessionUrl": null,
+  "error": "HTTP 401",
+  "responseBody": "{\"error\":\"invalid token\"}"
+}
+```
+→ jetzt weißt du exakt ob's an URL, Token, Response-Format oder Timeout liegt.
+
+### Debug-Checkliste wenn "Routine wird nicht getriggert"
+
+1. **Railway-Logs öffnen** → filter auf `routine.forward.start` — kommt der Request überhaupt raus?
+   - nein → check `routine.config.missing` → ENV fehlt, oder `lead.created` fehlt → Request kam nicht bis zur API
+   - ja → weiter
+
+2. **`POST /api/debug/ping`** ausführen — reproduziert das Problem isoliert ohne DB/Mail-Noise.
+
+3. In den Logs nach dem Lead-ID suchen:
+   - `routine.forward.response` mit `status: 4xx/5xx` → Routine-Auth oder Routine-Service-Problem
+   - `routine.forward.exception` mit `timeout: true` → Routine antwortet nicht innerhalb 15 s
+   - `routine.forward.exception` mit `cause: "fetch failed"` → DNS/TLS/Netzwerk
+   - `routine.sessionurl.missing` → Routine hat 2xx geantwortet, aber wir erkennen die Session-URL nicht → `bodyPreview` anschauen und ggf. `extractSessionUrl` in `lib/routine.ts` um das richtige Response-Feld erweitern
 
 ## Sicherheitshinweise
 

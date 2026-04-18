@@ -93,12 +93,15 @@ export async function POST(req: NextRequest) {
     timestamp: lead.createdAt.toISOString(),
   });
 
+  const debugInfo = buildDebugInfo(routine);
+
   if (routine.ok) {
     await prisma.lead.update({
       where: { id: lead.id },
       data: {
         status: "FORWARDED",
         routineSession: routine.sessionUrl ?? null,
+        errorMessage: routine.sessionUrl ? null : debugInfo,
       },
     });
 
@@ -124,16 +127,39 @@ export async function POST(req: NextRequest) {
     where: { id: lead.id },
     data: {
       status: mailed ? "FALLBACK_MAIL" : "FAILED",
-      errorMessage: routine.error ?? null,
+      errorMessage: debugInfo,
     },
   });
 
   log.warn("lead.routine.failed", {
     leadId: lead.id,
     status: routine.status,
+    attempts: routine.attempts,
     error: routine.error,
     fallbackMail: mailed,
   });
 
   return NextResponse.json({ ok: true, leadId: lead.id });
+}
+
+function buildDebugInfo(r: {
+  status?: number;
+  error?: string;
+  responseBody?: string;
+  attempts: number;
+}): string {
+  const parts = [
+    `attempts=${r.attempts}`,
+    r.status ? `status=${r.status}` : "status=none",
+    r.error ? `error=${r.error}` : "",
+  ].filter(Boolean);
+  let info = parts.join(" | ");
+  if (r.responseBody) {
+    const body =
+      r.responseBody.length > 1500
+        ? r.responseBody.slice(0, 1500) + "…"
+        : r.responseBody;
+    info += `\n--- response ---\n${body}`;
+  }
+  return info;
 }
