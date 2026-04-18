@@ -1,14 +1,8 @@
 import { log } from "./logger";
 
-export type RoutinePayload = {
+export type RoutineFireInput = {
   leadId: string;
-  name: string;
-  company: string;
-  email: string;
-  phone?: string;
-  message: string;
-  source: string;
-  timestamp: string;
+  text: string;
 };
 
 export type RoutineResponse = {
@@ -22,6 +16,8 @@ export type RoutineResponse = {
 
 const MAX_ATTEMPTS = 3;
 const RESPONSE_LOG_LIMIT = 2000;
+const ANTHROPIC_VERSION = "2023-06-01";
+const ANTHROPIC_BETA = "experimental-cc-routine-2026-04-01";
 
 function truncate(s: string | undefined, max: number): string | undefined {
   if (!s) return s;
@@ -37,15 +33,15 @@ function safeHost(url: string): string {
   }
 }
 
-export async function forwardToRoutine(
-  payload: RoutinePayload
+export async function fireRoutine(
+  input: RoutineFireInput
 ): Promise<RoutineResponse> {
   const url = process.env.CLAUDE_ROUTINE_URL;
   const token = process.env.CLAUDE_ROUTINE_TOKEN;
 
   if (!url || !token) {
     log.error("routine.config.missing", {
-      leadId: payload.leadId,
+      leadId: input.leadId,
       hasUrl: !!url,
       hasToken: !!token,
       hint: "Set CLAUDE_ROUTINE_URL and CLAUDE_ROUTINE_TOKEN in Railway env",
@@ -57,7 +53,7 @@ export async function forwardToRoutine(
     };
   }
 
-  const bodyStr = JSON.stringify(payload);
+  const bodyStr = JSON.stringify({ text: input.text });
   const host = safeHost(url);
 
   let lastError: string | undefined;
@@ -67,11 +63,12 @@ export async function forwardToRoutine(
 
   for (attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     log.info("routine.forward.start", {
-      leadId: payload.leadId,
+      leadId: input.leadId,
       attempt,
       host,
       tokenPrefix: token.slice(0, 6) + "…",
       bodyBytes: bodyStr.length,
+      textChars: input.text.length,
     });
 
     const startedAt = Date.now();
@@ -85,6 +82,8 @@ export async function forwardToRoutine(
         headers: {
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
+          "anthropic-version": ANTHROPIC_VERSION,
+          "anthropic-beta": ANTHROPIC_BETA,
           "User-Agent": "inconcepts-lead-testform/1.0",
         },
         body: bodyStr,
@@ -99,7 +98,7 @@ export async function forwardToRoutine(
       const contentType = res.headers.get("content-type") ?? "";
 
       log.info("routine.forward.response", {
-        leadId: payload.leadId,
+        leadId: input.leadId,
         attempt,
         status: res.status,
         durationMs,
@@ -112,14 +111,14 @@ export async function forwardToRoutine(
         const sessionUrl = extractSessionUrl(lastBody);
         if (!sessionUrl) {
           log.warn("routine.sessionurl.missing", {
-            leadId: payload.leadId,
+            leadId: input.leadId,
             attempt,
             status: res.status,
             bodyPreview: truncate(lastBody, RESPONSE_LOG_LIMIT),
           });
         } else {
           log.info("routine.forward.success", {
-            leadId: payload.leadId,
+            leadId: input.leadId,
             attempt,
             status: res.status,
             sessionUrl,
@@ -137,7 +136,7 @@ export async function forwardToRoutine(
 
       lastError = `HTTP ${res.status}`;
       log.warn("routine.forward.bad_status", {
-        leadId: payload.leadId,
+        leadId: input.leadId,
         attempt,
         status: res.status,
         durationMs,
@@ -160,7 +159,7 @@ export async function forwardToRoutine(
         err instanceof Error &&
         (err.name === "AbortError" || err.message.includes("aborted"));
       log.error("routine.forward.exception", {
-        leadId: payload.leadId,
+        leadId: input.leadId,
         attempt,
         durationMs,
         error: lastError,
@@ -196,15 +195,17 @@ function extractSessionUrl(body: string): string | undefined {
       data.session_url,
       data.url,
       (data.session as Record<string, unknown> | undefined)?.url,
+      (data.session as Record<string, unknown> | undefined)?.sessionUrl,
       (data.data as Record<string, unknown> | undefined)?.sessionUrl,
       (data.data as Record<string, unknown> | undefined)?.session_url,
       (data.data as Record<string, unknown> | undefined)?.url,
+      (data.run as Record<string, unknown> | undefined)?.url,
+      (data.routine as Record<string, unknown> | undefined)?.session_url,
     ];
     for (const c of candidates) {
       if (typeof c === "string" && /^https?:\/\//.test(c)) return c;
     }
   } catch {
-    // not JSON — try raw URL match as last resort
     const match = body.match(/https?:\/\/[^\s"'<>]+/);
     if (match) return match[0];
   }
@@ -213,4 +214,33 @@ function extractSessionUrl(body: string): string | undefined {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export type LeadBriefing = {
+  leadId: string;
+  name: string;
+  company: string;
+  email: string;
+  phone?: string | null;
+  message: string;
+  createdAt: Date;
+  source: string;
+};
+
+export function buildLeadBriefing(lead: LeadBriefing): string {
+  return [
+    "Neuer Lead aus dem Website-Kontaktformular. Bitte anreichern und in Zoho CRM + Notion ablegen.",
+    "",
+    `Lead-ID: ${lead.leadId}`,
+    `Eingegangen: ${lead.createdAt.toISOString()}`,
+    `Quelle: ${lead.source}`,
+    "",
+    `Name: ${lead.name}`,
+    `Firma: ${lead.company}`,
+    `Email: ${lead.email}`,
+    `Telefon: ${lead.phone ?? "-"}`,
+    "",
+    "Nachricht:",
+    lead.message,
+  ].join("\n");
 }

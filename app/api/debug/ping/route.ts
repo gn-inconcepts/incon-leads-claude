@@ -1,21 +1,20 @@
 import { NextResponse } from "next/server";
-import { forwardToRoutine } from "@/lib/routine";
+import { fireRoutine } from "@/lib/routine";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST() {
-  const result = await forwardToRoutine({
-    leadId: "DEBUG-PING-" + Date.now(),
-    name: "Debug Ping",
-    company: "inconcepts (debug)",
-    email: "debug@inconcepts.at",
-    phone: undefined,
-    message:
-      "Dies ist ein Test-Ping aus /api/debug/ping — bitte keine echten Schritte auslösen.",
-    source: "debug-ping",
-    timestamp: new Date().toISOString(),
-  });
+  const leadId = "DEBUG-PING-" + Date.now();
+  const text = [
+    "Debug-Ping aus /api/debug/ping.",
+    "Keine echten Aktionen auslösen — das ist nur ein Connection-Test.",
+    "",
+    `Lead-ID: ${leadId}`,
+    `Zeit: ${new Date().toISOString()}`,
+  ].join("\n");
+
+  const result = await fireRoutine({ leadId, text });
 
   return NextResponse.json(
     {

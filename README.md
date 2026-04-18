@@ -4,6 +4,22 @@ Minimales, produktions-taugliches Lead-Formular für die Live-Demo. Besucher tr�
 
 **Wichtig:** der Routine-Token liegt ausschließlich serverseitig — das Frontend ruft nur die eigene `/api/lead`-Route auf.
 
+## Routine-Integration
+
+Claude Code "Scheduled Tasks / Routines" werden über einen `fire`-Endpoint getriggert:
+
+```
+POST https://api.anthropic.com/v1/claude_code/routines/trig_XXXXXXX/fire
+Authorization: Bearer <trigger-token>
+anthropic-version: 2023-06-01
+anthropic-beta: experimental-cc-routine-2026-04-01
+Content-Type: application/json
+
+{"text": "optional extra turn appended to the session"}
+```
+
+Der Endpoint akzeptiert **nur** das Feld `text` — die Lead-Daten werden daher in `lib/routine.ts` (`buildLeadBriefing`) zu einem strukturierten Briefing zusammengebaut und als einzelner Turn an die Routine angehängt. Die beiden Beta-Header werden automatisch mitgeschickt.
+
 ## Stack
 
 - Next.js 15 (App Router) · TypeScript · TailwindCSS

@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { leadSchema } from "@/lib/validation";
 import { checkRateLimit } from "@/lib/ratelimit";
-import { forwardToRoutine } from "@/lib/routine";
+import { fireRoutine, buildLeadBriefing } from "@/lib/routine";
 import { sendFallbackMail } from "@/lib/mail";
 import { log } from "@/lib/logger";
 
@@ -82,16 +82,18 @@ export async function POST(req: NextRequest) {
 
   log.info("lead.created", { leadId: lead.id, ip });
 
-  const routine = await forwardToRoutine({
+  const text = buildLeadBriefing({
     leadId: lead.id,
     name: lead.name,
     company: lead.company,
     email: lead.email,
-    phone: lead.phone ?? undefined,
+    phone: lead.phone,
     message: lead.message,
+    createdAt: lead.createdAt,
     source: lead.source,
-    timestamp: lead.createdAt.toISOString(),
   });
+
+  const routine = await fireRoutine({ leadId: lead.id, text });
 
   const debugInfo = buildDebugInfo(routine);
 
